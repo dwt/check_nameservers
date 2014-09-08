@@ -2,7 +2,9 @@
 # encoding: utf-8
 """
 Checks that all advertised nameservers for a domain are on the same soa version, 
-thus ensuring that you won't get old info from any of them.
+thus ensuring your customers will get consistent answers to their dns queries.
+Will return the standard Icinga error codes. 
+See: https://www.monitoring-plugins.org/doc/guidelines.html#AEN78
 
 Usage:
     check_soa_for_domain.py --domain=DOMAIN [--warning=WARNING_NAMESERVER_LIMIT] 
@@ -90,7 +92,7 @@ def check_soas_equal_for_domain(domain_name, warning_minimum_nameservers=2, crit
     
 
 import unittest
-from pyexpect import expect
+from pyexpect import expect # FIXME: only require if running unit tests
 class SOATest(unittest.TestCase):
     
     def setUp(self):
