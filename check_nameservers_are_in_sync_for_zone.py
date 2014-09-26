@@ -62,7 +62,7 @@ class NAGIOS(object):
 def nameservers_for_domain(domain_name):
     output = check_output(['dig', '+short', 'NS', domain_name])
     if "" == output: return []
-    return map(lambda each: each[:-1], output.strip().split('\n'))
+    return map(lambda each: each.rstrip('.'), output.strip().split('\n'))
 
 def soa_for_domain_with_dns_server(domain_name, dns_server_name):
     output = check_output(['dig', '+short', 'SOA', domain_name, '@' + dns_server_name])
@@ -129,7 +129,7 @@ class SOATest(unittest.TestCase):
     def test_get_nameservers_for_domain(self):
         self.on_command('dig +short NS yeepa.de').provide_output("""\
             nsc1.schlundtech.de.
-            nsb1.schlundtech.de.
+            nsb1.schlundtech.de
             nsa1.schlundtech.de.
             nsd1.schlundtech.de.""")
         nameservers = nameservers_for_domain('yeepa.de')
