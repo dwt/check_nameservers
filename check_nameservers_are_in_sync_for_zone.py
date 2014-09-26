@@ -73,8 +73,12 @@ def check_soas_equal_for_domain(domain_name, warning_minimum_nameservers=2, crit
         nameservers = nameservers_for_domain(domain_name)
         if len(nameservers) == 0:
             return (NAGIOS.CRITICAL, 'No nameserver for domain "%s", dns is unavailable.' % domain_name)
-    
+        
         soa_records = map(lambda each: soa_for_domain_with_dns_server(domain_name, each), nameservers)
+        empty_response_servers = [nameservers[index] for index, record in enumerate(soa_records) if 0 == len(record)]
+        if len(empty_response_servers) >= 1:
+            return (NAGIOS.CRITICAL,
+                'Nameserver(s) %s did not return SOA record for domain "%s"' % (empty_response_servers, domain_name))
         are_all_soas_equal = all(map(lambda each: each == soa_records[0], soa_records))
     except Exception as error:
         return (NAGIOS.UNKNOWN, "%r" % error)
@@ -163,6 +167,14 @@ class SOATest(unittest.TestCase):
         self.on_command('dig +short SOA yeepa.de @nsc1.schlundtech.de').provide_output("not equal")
         self.on_command('dig +short SOA yeepa.de @nsb1.schlundtech.de').provide_output("to this")
         expect(check_soas_equal_for_domain('yeepa.de')) == (NAGIOS.CRITICAL, 'Nameservers do not agree for domain "yeepa.de" [\'not equal\', \'to this\']')
+    
+    def test_should_erorr_if_nameservers_are_not_authoritative(self):
+        self.on_command('dig +short NS example.com').provide_output("""\
+            b.iana-servers.net.
+            a.iana-servers.net.""")
+        self.on_command('dig +short SOA example.com @a.iana-servers.net').provide_output("anything")
+        self.on_command('dig +short SOA example.com @b.iana-servers.net').provide_output("")
+        expect(check_soas_equal_for_domain('example.com')) == (NAGIOS.CRITICAL, 'Nameserver(s) [\'b.iana-servers.net\'] did not return SOA record for domain "example.com"')
     
     def test_should_error_if_no_nameservers(self):
         self.on_command('dig +short NS yeepa.de').provide_output("")
