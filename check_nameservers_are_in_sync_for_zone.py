@@ -1,15 +1,15 @@
 #!/usr/bin/env python
 # encoding: utf-8
 """
-Checks that all advertised nameservers for a domain are on the same soa version, 
+Checks that all advertised nameservers for a domain are on the same soa version,
 thus ensuring your customers will get consistent answers to their dns queries.
-Will return the standard Icinga error codes. 
+Will return the standard Icinga error codes.
 See: https://www.monitoring-plugins.org/doc/guidelines.html#AEN78
 
 Usage:
-    check_soa_for_domain.py --domain=DOMAIN [--warning=WARNING_NAMESERVER_LIMIT] 
+    check_nameservers_are_in_sync_for_zone.py --domain=DOMAIN [--warning=WARNING_NAMESERVER_LIMIT]
                                             [--critical=CRITICAL_NAMESERVER_LIMIT]
-    check_soa_for_domain.py --selftest [<unittest-options>...]
+    check_nameservers_are_in_sync_for_zone.py --selftest [<unittest-options>...]
 
 Option:
     -h, --help              Show this screen and exit.
@@ -29,13 +29,13 @@ def main():
     
     (return_code, label), message \
         = check_soas_equal_for_domain(
-            domain_name=arguments['--domain'], 
-            warning_minimum_nameservers=int(arguments['--warning']), 
+            domain_name=arguments['--domain'],
+            warning_minimum_nameservers=int(arguments['--warning']),
             critical_minimum_nameservers=int(arguments['--critical']))
     print("%s: %s" % (label, message))
     sys.exit(return_code)
 
-from docopt import docopt # Only external requirement. Install via: pip install docopt
+from docopt import docopt  # Only external requirement. Install via: pip install docopt
 
 import sys
 import subprocess
@@ -44,16 +44,16 @@ from StringIO import StringIO
 
 def check_output(command):
     "Stub for subprocess.check_output which is only available from python 2.7+"
-    buffer = StringIO()
+    buffer_ = StringIO()
     process = subprocess.Popen(command, stdout=subprocess.PIPE)
     for line in process.stdout:
-        buffer.write(line)    
+        buffer_.write(line)
     process.wait()
     if process.returncode != 0:
         raise subprocess.CalledProcessError(process.returncode, command)
-    return buffer.getvalue()
+    return buffer_.getvalue()
 
-class NAGIOS:
+class NAGIOS(object):
     OK = (0, 'OK')
     WARNING = (1, 'WARNING')
     CRITICAL = (2, 'CRITICAL')
@@ -62,7 +62,7 @@ class NAGIOS:
 def nameservers_for_domain(domain_name):
     output = check_output(['dig', '+short', 'NS', domain_name])
     if "" == output: return []
-    return map(lambda each: each[:-1], output.strip().split('\n'))
+    return map(lambda each: each.rstrip('.'), output.strip().split('\n'))
 
 def soa_for_domain_with_dns_server(domain_name, dns_server_name):
     output = check_output(['dig', '+short', 'SOA', domain_name, '@' + dns_server_name])
@@ -73,10 +73,14 @@ def check_soas_equal_for_domain(domain_name, warning_minimum_nameservers=2, crit
         nameservers = nameservers_for_domain(domain_name)
         if len(nameservers) == 0:
             return (NAGIOS.CRITICAL, 'No nameserver for domain "%s", dns is unavailable.' % domain_name)
-    
+        
         soa_records = map(lambda each: soa_for_domain_with_dns_server(domain_name, each), nameservers)
+        empty_response_servers = [nameservers[index] for index, record in enumerate(soa_records) if 0 == len(record)]
+        if len(empty_response_servers) >= 1:
+            return (NAGIOS.CRITICAL,
+                'Nameserver(s) %s did not return SOA record for domain "%s"' % (empty_response_servers, domain_name))
         are_all_soas_equal = all(map(lambda each: each == soa_records[0], soa_records))
-    except StandardError as error:
+    except Exception as error:
         return (NAGIOS.UNKNOWN, "%r" % error)
     
     if not are_all_soas_equal:
@@ -87,12 +91,12 @@ def check_soas_equal_for_domain(domain_name, warning_minimum_nameservers=2, crit
     elif len(nameservers) < warning_minimum_nameservers:
         return (NAGIOS.WARNING, 'Expected at least %d nameservers for domain "%s", but only found %d - %r' % (
             warning_minimum_nameservers, domain_name, len(nameservers), nameservers))
-    else: #are_all_soas_equal
+    else:  # are_all_soas_equal
         return (NAGIOS.OK, soa_records[0])
     
 
 import unittest
-from pyexpect import expect # FIXME: only require if running unit tests
+from pyexpect import expect  # FIXME: only require if running unit tests
 class SOATest(unittest.TestCase):
     
     def setUp(self):
@@ -129,14 +133,14 @@ class SOATest(unittest.TestCase):
     def test_get_nameservers_for_domain(self):
         self.on_command('dig +short NS yeepa.de').provide_output("""\
             nsc1.schlundtech.de.
-            nsb1.schlundtech.de.
+            nsb1.schlundtech.de
             nsa1.schlundtech.de.
             nsd1.schlundtech.de.""")
         nameservers = nameservers_for_domain('yeepa.de')
         expect(nameservers) == [
-            'nsc1.schlundtech.de', 
-            'nsb1.schlundtech.de', 
-            'nsa1.schlundtech.de', 
+            'nsc1.schlundtech.de',
+            'nsb1.schlundtech.de',
+            'nsa1.schlundtech.de',
             'nsd1.schlundtech.de']
     
     def test_get_soa_for_domain_from_nameserver(self):
@@ -163,6 +167,14 @@ class SOATest(unittest.TestCase):
         self.on_command('dig +short SOA yeepa.de @nsc1.schlundtech.de').provide_output("not equal")
         self.on_command('dig +short SOA yeepa.de @nsb1.schlundtech.de').provide_output("to this")
         expect(check_soas_equal_for_domain('yeepa.de')) == (NAGIOS.CRITICAL, 'Nameservers do not agree for domain "yeepa.de" [\'not equal\', \'to this\']')
+    
+    def test_should_erorr_if_nameservers_are_not_authoritative(self):
+        self.on_command('dig +short NS example.com').provide_output("""\
+            b.iana-servers.net.
+            a.iana-servers.net.""")
+        self.on_command('dig +short SOA example.com @a.iana-servers.net').provide_output("anything")
+        self.on_command('dig +short SOA example.com @b.iana-servers.net').provide_output("")
+        expect(check_soas_equal_for_domain('example.com')) == (NAGIOS.CRITICAL, 'Nameserver(s) [\'b.iana-servers.net\'] did not return SOA record for domain "example.com"')
     
     def test_should_error_if_no_nameservers(self):
         self.on_command('dig +short NS yeepa.de').provide_output("")
