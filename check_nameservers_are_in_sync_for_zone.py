@@ -14,14 +14,22 @@ Usage:
 Option:
     -h, --help              Show this screen and exit.
     -d, --domain DOMAIN     The domain to check.
-    -w, --warning WARNING_NAMESERVER_LIMIT      Warn if less nameservers [default: 2]
-    -c, --critical CRITICAL_NAMESERVER_LIMIT    Critical if less nameservers [default: 1]
+    -w, --warning WARNING_NAMESERVER_LIMIT      Warn if less nameservers [default: 3]
+    -c, --critical CRITICAL_NAMESERVER_LIMIT    Critical if less nameservers [default: 2]
     --selftest              Execute the unittests for this module
 
 Copyright: Martin Häcker <spamfenger (at) gmx.de>
 License AGPL: https://www.gnu.org/licenses/agpl-3.0.html
 """
 
+"""
+TODO:
+* change dig calls to skip all caches
+* add switches for ipv6, defaulting the same as ipv4
+* add switch to disble ipv6 checks
+* collect all ip addresses
+* check ip addresses directly instead of names - but still provide names in error messages
+"""
 def main():
     arguments = docopt(__doc__)
     if arguments['--selftest']:
