@@ -8,7 +8,7 @@ See: https://www.monitoring-plugins.org/doc/guidelines.html#AEN78
 
 Usage:
     check_nameservers_are_in_sync_for_zone.py --domain=DOMAIN [--warning=WARNING_NAMESERVER_LIMIT]
-                                            [--critical=CRITICAL_NAMESERVER_LIMIT]
+        [--critical=CRITICAL_NAMESERVER_LIMIT] [--hidden-primary=NAMESERVER...]
     check_nameservers_are_in_sync_for_zone.py --selftest [<unittest-options>...]
 
 Option:
@@ -81,13 +81,14 @@ def soa_for_domain_with_dns_server(domain_name, dns_server_name):
     output = check_output(['dig', '+short', 'SOA', domain_name, '@' + dns_server_name])
     return output.strip()
 
-def check_soas_equal_for_domain(domain_name, warning_minimum_nameservers=2, critical_minimum_nameservers=1):
+def check_soas_equal_for_domain(domain_name, warning_minimum_nameservers=2, critical_minimum_nameservers=1, hidden_primaries=()):
+    # hidden primaries can't count towards the limits
     try:
         nameservers = nameservers_for_domain(domain_name)
         if len(nameservers) == 0:
             return (NAGIOS.CRITICAL, 'No nameserver for domain "%s", dns is unavailable.' % domain_name)
         
-        soa_records = map(lambda each: soa_for_domain_with_dns_server(domain_name, each), nameservers)
+        soa_records = map(lambda each: soa_for_domain_with_dns_server(domain_name, each), nameservers + list(hidden_primaries))
         empty_response_servers = [nameservers[index] for index, record in enumerate(soa_records) if 0 == len(record)]
         if len(empty_response_servers) >= 1:
             return (NAGIOS.CRITICAL,
@@ -175,6 +176,22 @@ class SOATest(unittest.TestCase):
             nsa1.schlundtech.de. sh.sntl-publishing.com. 2014090302 43200 7200 1209600 600""")
         expect(check_soas_equal_for_domain('yeepa.de')) == (
             NAGIOS.OK, 'nsa1.schlundtech.de. sh.sntl-publishing.com. 2014090302 43200 7200 1209600 600')
+    
+    def test_should_compare_hidden_primaries(self):
+        self.on_command('dig +short NS yeepa.de').provide_output("""\
+            nsc1.schlundtech.de.
+            nsb1.schlundtech.de.""")
+        self.on_command('dig +short SOA yeepa.de @nsc1.schlundtech.de').provide_output("""\
+            nsa1.schlundtech.de. sh.sntl-publishing.com. 2014090302 43200 7200 1209600 600""")
+        self.on_command('dig +short SOA yeepa.de @nsb1.schlundtech.de').provide_output("""\
+            nsa1.schlundtech.de. sh.sntl-publishing.com. 2014090302 43200 7200 1209600 600""")
+        # hidden primary query
+        self.on_command('dig +short SOA yeepa.de @zhref-mail.zms.hosting').provide_output("""\
+            nsa1.schlundtech.de. sh.sntl-publishing.com. 2014090302 43200 7200 1209600 600""")
+        
+        expect(check_soas_equal_for_domain('yeepa.de', hidden_primaries=['zhref-mail.zms.hosting'])) == (
+            NAGIOS.OK, 'nsa1.schlundtech.de. sh.sntl-publishing.com. 2014090302 43200 7200 1209600 600')
+        
     
     def test_should_return_false_if_soas_differ(self):
         self.on_command('dig +short NS yeepa.de').provide_output("""\
