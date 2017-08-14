@@ -21,10 +21,11 @@ Option:
 
 Copyright: Martin Häcker <spamfenger (at) gmx.de>
 License AGPL: https://www.gnu.org/licenses/agpl-3.0.html
-
 """
 
 """
+Maintained at: https://github.com/dwt/monitoring_probes
+
 TODO
 * add suppport for ipv4 and ipv6 checks as these might be different nameservers
 * allow disabling ipv6 checks
