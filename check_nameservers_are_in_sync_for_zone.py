@@ -14,26 +14,31 @@ Usage:
 Option:
     -h, --help              Show this screen and exit.
     -d, --domain DOMAIN     The domain to check.
-    -w, --warning WARNING_NAMESERVER_LIMIT      Warn if less nameservers [default: 3]
-    -c, --critical CRITICAL_NAMESERVER_LIMIT    Critical if less nameservers [default: 2]
+    -w, --warning WARNING_NAMESERVER_LIMIT      Warn if less nameservers [default: 2]
+    -c, --critical CRITICAL_NAMESERVER_LIMIT    Critical if less nameservers [default: 1]
+    --hidden-primaries NAMESERVER...    List of hidden primaries [default: ()]
     --selftest              Execute the unittests for this module
 
 Copyright: Martin Häcker <spamfenger (at) gmx.de>
 License AGPL: https://www.gnu.org/licenses/agpl-3.0.html
+
 """
 
 """
-TODO:
-* change dig calls to skip all caches
-* add switches for ipv6, defaulting the same as ipv4
-* add switch to disble ipv6 checks
-* collect all ip addresses
-* check ip addresses directly instead of names - but still provide names in error messages
+TODO
+* add suppport for ipv4 and ipv6 checks as these might be different nameservers
+* allow disabling ipv6 checks
+* ensure dig calls skip all caches
+* collect all IP addresses for nameservers that resolve to multiple IPs and check them directly
+* still provide names in error messages
 """
+
 def main():
     arguments = docopt(__doc__)
     if arguments['--selftest']:
         unittest.main(argv=sys.argv[1:])
+    
+    print(arguments['--hidden-primary'])
     
     (return_code, label), message \
         = check_soas_equal_for_domain(
@@ -104,17 +109,15 @@ def check_soas_equal_for_domain(domain_name, warning_minimum_nameservers=2, crit
     
 
 import unittest
+
+def expect(*args, **kwargs):
+    from pyexpect import expect as expect_
+    return expect_(*args, **kwargs)
+
 class SOATest(unittest.TestCase):
-    
-    @property
-    def expect(self):
-        # provided as property to avoid dependency when installing on servers
-        from pyexpect import expect  # Only testing requirement. Install via: pip install pyexpect
-        return expect
     
     def setUp(self):
         self._stubbed_commands = dict()
-        
         global check_output
         self._original_check_output = check_output
         check_output = self.check_output_mock
@@ -150,7 +153,7 @@ class SOATest(unittest.TestCase):
             nsa1.schlundtech.de.
             nsd1.schlundtech.de.""")
         nameservers = nameservers_for_domain('yeepa.de')
-        self.expect(nameservers) == [
+        expect(nameservers) == [
             'nsc1.schlundtech.de',
             'nsb1.schlundtech.de',
             'nsa1.schlundtech.de',
@@ -160,7 +163,7 @@ class SOATest(unittest.TestCase):
         self.on_command('dig +short SOA yeepa.de @nsc1.schlundtech.de').provide_output("""\
             nsa1.schlundtech.de. sh.sntl-publishing.com. 2014090302 43200 7200 1209600 600""")
         soa = soa_for_domain_with_dns_server('yeepa.de', 'nsc1.schlundtech.de')
-        self.expect(soa) == 'nsa1.schlundtech.de. sh.sntl-publishing.com. 2014090302 43200 7200 1209600 600'
+        expect(soa) == 'nsa1.schlundtech.de. sh.sntl-publishing.com. 2014090302 43200 7200 1209600 600'
     
     def test_should_compare_soas_from_all_web_servers(self):
         self.on_command('dig +short NS yeepa.de').provide_output("""\
@@ -170,7 +173,7 @@ class SOATest(unittest.TestCase):
             nsa1.schlundtech.de. sh.sntl-publishing.com. 2014090302 43200 7200 1209600 600""")
         self.on_command('dig +short SOA yeepa.de @nsb1.schlundtech.de').provide_output("""\
             nsa1.schlundtech.de. sh.sntl-publishing.com. 2014090302 43200 7200 1209600 600""")
-        self.expect(check_soas_equal_for_domain('yeepa.de')) == (
+        expect(check_soas_equal_for_domain('yeepa.de')) == (
             NAGIOS.OK, 'nsa1.schlundtech.de. sh.sntl-publishing.com. 2014090302 43200 7200 1209600 600')
     
     def test_should_return_false_if_soas_differ(self):
@@ -179,7 +182,7 @@ class SOATest(unittest.TestCase):
             nsb1.schlundtech.de.""")
         self.on_command('dig +short SOA yeepa.de @nsc1.schlundtech.de').provide_output("not equal")
         self.on_command('dig +short SOA yeepa.de @nsb1.schlundtech.de').provide_output("to this")
-        self.expect(check_soas_equal_for_domain('yeepa.de')) == (NAGIOS.CRITICAL, 'Nameservers do not agree for domain "yeepa.de" [\'not equal\', \'to this\']')
+        expect(check_soas_equal_for_domain('yeepa.de')) == (NAGIOS.CRITICAL, 'Nameservers do not agree for domain "yeepa.de" [\'not equal\', \'to this\']')
     
     def test_should_erorr_if_nameservers_are_not_authoritative(self):
         self.on_command('dig +short NS example.com').provide_output("""\
@@ -187,34 +190,34 @@ class SOATest(unittest.TestCase):
             a.iana-servers.net.""")
         self.on_command('dig +short SOA example.com @a.iana-servers.net').provide_output("anything")
         self.on_command('dig +short SOA example.com @b.iana-servers.net').provide_output("")
-        self.expect(check_soas_equal_for_domain('example.com')) == (NAGIOS.CRITICAL, 'Nameserver(s) [\'b.iana-servers.net\'] did not return SOA record for domain "example.com"')
+        expect(check_soas_equal_for_domain('example.com')) == (NAGIOS.CRITICAL, 'Nameserver(s) [\'b.iana-servers.net\'] did not return SOA record for domain "example.com"')
     
     def test_should_error_if_no_nameservers(self):
         self.on_command('dig +short NS yeepa.de').provide_output("")
-        self.expect(check_soas_equal_for_domain('yeepa.de')) \
+        expect(check_soas_equal_for_domain('yeepa.de')) \
              == (NAGIOS.CRITICAL, 'No nameserver for domain "yeepa.de", dns is unavailable.')
     
-    def test_should_allow_to_configure_warning_level_for_number_of_webservers(self):
+    def test_should_allow_to_configure_warning_level_for_number_of_nameservers(self):
         self.on_command('dig +short NS yeepa.de').provide_output("""\
             nsc1.schlundtech.de.
             nsb1.schlundtech.de.""")
         self.on_command('dig +short SOA yeepa.de @nsc1.schlundtech.de').provide_output("equal")
         self.on_command('dig +short SOA yeepa.de @nsb1.schlundtech.de').provide_output("equal")
-        self.expect(check_soas_equal_for_domain('yeepa.de', warning_minimum_nameservers=3)) \
+        expect(check_soas_equal_for_domain('yeepa.de', warning_minimum_nameservers=3)) \
              == (NAGIOS.WARNING, 'Expected at least 3 nameservers for domain "yeepa.de", but only found 2 - '
                  "['nsc1.schlundtech.de', 'nsb1.schlundtech.de']")
     
     def test_should_error_if_less_than_critical_nameservers(self):
         self.on_command('dig +short NS yeepa.de').provide_output("""nsc1.schlundtech.de.""")
         self.on_command('dig +short SOA yeepa.de @nsc1.schlundtech.de').provide_output("good enough")
-        self.expect(check_soas_equal_for_domain('yeepa.de', critical_minimum_nameservers=2)) \
+        expect(check_soas_equal_for_domain('yeepa.de', critical_minimum_nameservers=2)) \
              == (NAGIOS.CRITICAL, 'Less than 2 nameservers for domain "yeepa.de", only 1 available. [\'nsc1.schlundtech.de\']')
     
     def test_should_catch_unexpected_errors(self):
         global check_output
         def fail(*args): raise AssertionError('fnord')
         check_output     = fail
-        self.expect(check_soas_equal_for_domain('yeepa.de')) \
+        expect(check_soas_equal_for_domain('yeepa.de')) \
              == (NAGIOS.UNKNOWN, "AssertionError('fnord',)")
         
 
