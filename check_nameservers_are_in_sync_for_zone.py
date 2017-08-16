@@ -39,13 +39,13 @@ def main():
     if arguments['--selftest']:
         unittest.main(argv=sys.argv[1:])
     
-    print(arguments['--hidden-primary'])
-    
     (return_code, label), message \
         = check_soas_equal_for_domain(
             domain_name=arguments['--domain'],
             warning_minimum_nameservers=int(arguments['--warning']),
-            critical_minimum_nameservers=int(arguments['--critical']))
+            critical_minimum_nameservers=int(arguments['--critical']),
+            hidden_primaries=arguments['--hidden-primary'],
+    )
     print("%s: %s" % (label, message))
     sys.exit(return_code)
 
@@ -116,6 +116,7 @@ def expect(*args, **kwargs):
     from pyexpect import expect as expect_
     return expect_(*args, **kwargs)
 
+# REFACT add / change tests to go through the shell interface, to ensure the wiring is correct
 class SOATest(unittest.TestCase):
     
     def setUp(self):
