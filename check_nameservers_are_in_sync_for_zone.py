@@ -54,7 +54,7 @@ from docopt import docopt  # Only external requirement. Install via: pip install
 import sys
 import subprocess
 from StringIO import StringIO
-
+# import logging
 
 def check_output(command):
     "Stub for subprocess.check_output which is only available from python 2.7+"
@@ -79,8 +79,13 @@ def nameservers_for_domain(domain_name):
     return map(lambda each: each.rstrip('.'), output.strip().split('\n'))
 
 def soa_for_domain_with_dns_server(domain_name, dns_server_name):
-    output = check_output(['dig', '+short', 'SOA', domain_name, '@' + dns_server_name])
-    return output.strip()
+    try:
+        output = check_output(['dig', '+short', 'SOA', domain_name, '@' + dns_server_name])
+        return output.strip()
+    except subprocess.CalledProcessError as error:
+        # TODO if --verbose
+        #logging.exception('soa_for_domain_with_dns_server(domain_name=%r, dns_server_name=%r)', domain_name, dns_server_name)
+        return ''
 
 def check_soas_equal_for_domain(domain_name, warning_minimum_nameservers=2, critical_minimum_nameservers=1, hidden_primaries=()):
     # hidden primaries can't count towards the limits
@@ -89,14 +94,17 @@ def check_soas_equal_for_domain(domain_name, warning_minimum_nameservers=2, crit
         if len(nameservers) == 0:
             return (NAGIOS.CRITICAL, 'No nameserver for domain "%s", dns is unavailable.' % domain_name)
         
-        soa_records = map(lambda each: soa_for_domain_with_dns_server(domain_name, each), nameservers + list(hidden_primaries))
-        empty_response_servers = [nameservers[index] for index, record in enumerate(soa_records) if 0 == len(record)]
+        all_nameservers = nameservers + list(hidden_primaries)
+        soa_records = map(lambda each: soa_for_domain_with_dns_server(domain_name, each), all_nameservers)
+        empty_response_servers = [all_nameservers[index] for index, record in enumerate(soa_records) if 0 == len(record)]
         if len(empty_response_servers) >= 1:
             return (NAGIOS.CRITICAL,
                 'Nameserver(s) %s did not return SOA record for domain "%s"' % (empty_response_servers, domain_name))
         are_all_soas_equal = all(map(lambda each: each == soa_records[0], soa_records))
     except Exception as error:
-        return (NAGIOS.UNKNOWN, "%r" % error)
+        # TODO if --verbose
+        # logging.exception('check_soas_equal_for_domain(domain_name=%r, warning_minimum_nameservers=%r, critical_minimum_nameservers=%r, hidden_primaries=%r)', domain_name, warning_minimum_nameservers, critical_minimum_nameservers, hidden_primaries)
+        return (NAGIOS.WARNING, "%r" % error)
     
     if not are_all_soas_equal:
         return (NAGIOS.CRITICAL, 'Nameservers do not agree for domain "%s" %r' % (domain_name, soa_records))
@@ -133,6 +141,9 @@ class SOATest(unittest.TestCase):
         normalized_command = ' '.join(command)
         assert normalized_command in self._stubbed_commands, \
             "Missing output for <%s>, only have output for <%s>" % (normalized_command, self._stubbed_commands)
+        import inspect
+        if inspect.isfunction(self._stubbed_commands[normalized_command]):
+            return self._stubbed_commands[normalized_command]()
         return self._stubbed_commands[normalized_command]
     
     def on_command(self, expected_command):
@@ -142,9 +153,12 @@ class SOATest(unittest.TestCase):
     
     def provide_output(self, stubbed_output):
         "Outdents output"
-        command = self._expected_command
         output = '\n'.join(map(lambda each: each.lstrip(), stubbed_output.split('\n')))
-        self._stubbed_commands[command] = output
+        self._stubbed_commands[self._expected_command] = output
+        del self._expected_command
+    
+    def provide_function(self, a_function):
+        self._stubbed_commands[self._expected_command] = a_function
         del self._expected_command
     
     ## Tests
@@ -193,7 +207,21 @@ class SOATest(unittest.TestCase):
         
         expect(check_soas_equal_for_domain('yeepa.de', hidden_primaries=['zhref-mail.zms.hosting'])) == (
             NAGIOS.OK, 'nsa1.schlundtech.de. sh.sntl-publishing.com. 2014090302 43200 7200 1209600 600')
+    
+    def test_should_show_critical_error_if_hidden_primary_is_dead(self):
+        self.on_command('dig +short NS yeepa.de').provide_output("""\
+            nsc1.schlundtech.de.
+            nsb1.schlundtech.de.""")
+        self.on_command('dig +short SOA yeepa.de @nsc1.schlundtech.de').provide_output("""\
+            nsa1.schlundtech.de. sh.sntl-publishing.com. 2014090302 43200 7200 1209600 600""")
+        self.on_command('dig +short SOA yeepa.de @nsb1.schlundtech.de').provide_output("""\
+            nsa1.schlundtech.de. sh.sntl-publishing.com. 2014090302 43200 7200 1209600 600""")
+        # hidden primary query
+        def fail(): raise subprocess.CalledProcessError(-1, 'dig ...', "Process error'd")
+        self.on_command('dig +short SOA yeepa.de @zhref-mail.zms.hosting').provide_function(fail)
         
+        expect(check_soas_equal_for_domain('yeepa.de', hidden_primaries=['zhref-mail.zms.hosting'])) == (
+            NAGIOS.CRITICAL, 'Nameserver(s) [\'zhref-mail.zms.hosting\'] did not return SOA record for domain "yeepa.de"')
     
     def test_should_return_false_if_soas_differ(self):
         self.on_command('dig +short NS yeepa.de').provide_output("""\
@@ -237,9 +265,18 @@ class SOATest(unittest.TestCase):
         def fail(*args): raise AssertionError('fnord')
         check_output     = fail
         expect(check_soas_equal_for_domain('yeepa.de')) \
-             == (NAGIOS.UNKNOWN, "AssertionError('fnord',)")
-        
+             == (NAGIOS.WARNING, "AssertionError('fnord',)")
+    
+    def test_should_count_non_answering_nameserver_as_empty_response(self):
+        self.on_command('dig +short NS yeepa.de').provide_output("""\
+            nsc1.schlundtech.de.
+            nsb1.schlundtech.de.""")
+        self.on_command('dig +short SOA yeepa.de @nsc1.schlundtech.de').provide_output("""\
+            nsa1.schlundtech.de. sh.sntl-publishing.com. 2014090302 43200 7200 1209600 600""")
+        def fail(): raise subprocess.CalledProcessError(-1, 'dig ...', "process error'd")
+        self.on_command('dig +short SOA yeepa.de @nsb1.schlundtech.de').provide_function(fail)
+        expect(check_soas_equal_for_domain('yeepa.de', )) == (
+            NAGIOS.CRITICAL, 'Nameserver(s) [\'nsb1.schlundtech.de\'] did not return SOA record for domain "yeepa.de"')
 
 if __name__ == '__main__':
     main()
-
