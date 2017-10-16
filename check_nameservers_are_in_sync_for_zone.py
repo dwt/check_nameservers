@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 # encoding: utf-8
+# LICENSE: ISC <https://opensource.org/licenses/ISC>
+
 """
 Checks that all advertised nameservers for a domain are on the same soa version,
 thus ensuring your customers will get consistent answers to their dns queries.
