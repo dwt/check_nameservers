@@ -17,7 +17,7 @@ Option:
     -d, --domain DOMAIN     The domain to check.
     -w, --warning WARNING_NAMESERVER_LIMIT      Warn if less nameservers [default: 2]
     -c, --critical CRITICAL_NAMESERVER_LIMIT    Critical if less nameservers [default: 1]
-    --hidden-primaries NAMESERVER...    List of hidden primaries [default: ()]
+    --hidden-primary NAMESERVER...    List of hidden primaries [default: ()]
     --selftest              Execute the unittests for this module
 
 Copyright: Martin Häcker <spamfenger (at) gmx.de>
